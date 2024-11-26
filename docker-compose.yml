@@ -1,0 +1,92 @@
+services:
+  victoriametrics:
+    container_name: victoriametrics
+    image: victoriametrics/victoria-metrics:latest
+    ports:
+      - "8428:8428"
+    volumes:
+      - victoria-metrics-data:/storage
+    command:
+      - '--storageDataPath=/storage'
+      - '--httpListenAddr=:8428'
+      - '--retentionPeriod=1'  # Data retention in months
+    restart: unless-stopped
+
+  vmagent:
+    container_name: vmagent
+    image: victoriametrics/vmagent:latest
+    depends_on:
+      - "victoriametrics"
+    ports:
+      - "8429:8429"
+    volumes:
+      - vmagent-data:/vmagent-data
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--promscrape.config=/etc/prometheus/prometheus.yml'
+      - '--promscrape.config.strictParse=false'
+      - '--remoteWrite.url=http://victoriametrics:8428/api/v1/write'
+      - '--remoteWrite.tmpDataPath=/vmagent-data'
+    restart: unless-stopped
+
+  loki:
+    container_name: loki
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+      - ./loki-config.yml:/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/local-config.yaml -config.expand-env=true
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/datasource:/etc/grafana/provisioning/datasources
+      - ./grafana/dashboard:/etc/grafana/provisioning/dashboards
+    depends_on:
+      - victoriametrics
+      - loki
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: unless-stopped
+
+  promtail:
+    container_name: promtail
+    image: grafana/promtail:latest
+    volumes:
+      - /var/log:/var/log:ro
+      - ./promtail-config.yml:/etc/promtail/config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+volumes:
+  victoria-metrics-data:
+  vmagent-data:
+  grafana_data:
+  loki-data:
